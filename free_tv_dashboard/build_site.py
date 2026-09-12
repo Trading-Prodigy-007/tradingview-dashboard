@@ -121,60 +121,71 @@ def identify_chart_images_by_content(paths):
         'g10_proxy': scored[1][1]
     }
 
+def title_text_score(path):
+    """
+    Classify TradingView screenshots from the title rendered INSIDE the image.
+
+    We inspect only the top-left title strip. After normalizing screenshot width,
+    "Sector RS Dashboard vs SPY" has a much larger light neutral-text footprint
+    than "G10 EL Proxy".
+    """
+    with Image.open(path) as im:
+        rgb = im.convert('RGB')
+
+        target_w = 1800
+        if rgb.width != target_w:
+            target_h = max(1, round(rgb.height * target_w / rgb.width))
+            rgb = rgb.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+        # TradingView title is in this top-left strip.
+        crop = rgb.crop((0, 0, 165, min(36, rgb.height)))
+
+        score = 0
+        for r, g, b in crop.getdata():
+            mx = max(r, g, b)
+            mn = min(r, g, b)
+            chroma = mx - mn
+
+            # Count light gray/white title pixels; ignore colored values/background.
+            if mx >= 110 and chroma <= 48:
+                score += 1
+
+        return score
+
+
 def identify_chart_images(paths):
     """
-    Deterministic chart identification.
+    Identify screenshots by the chart title INSIDE the image.
+    Filenames are ignored completely.
 
-    Required filename hints:
-      - Sector RS screenshot: filename must contain "sector"
-      - G10 screenshot: filename must contain "g10" or "proxy"
-
-    The automation NEVER guesses from dimensions or visual appearance.
-    If filenames are ambiguous, publishing stops instead of risking a swap.
+    If confidence is not strong enough, processing stops instead of guessing.
     """
     paths = list(paths)
     if len(paths) != 2:
         raise ValueError("Expected exactly 2 chart screenshots")
 
-    result = {}
+    scored = sorted(
+        ((title_text_score(p), p) for p in paths),
+        key=lambda x: x[0],
+        reverse=True
+    )
 
-    for p in paths:
-        name = p.stem.lower().replace('-', ' ').replace('_', ' ')
+    high_score, sector_candidate = scored[0]
+    low_score, g10_candidate = scored[1]
 
-        is_sector = 'sector' in name
-        is_g10 = ('g10' in name) or ('proxy' in name)
-
-        if is_sector and is_g10:
-            raise ValueError(
-                f'Ambiguous screenshot filename: {p.name}. '
-                'Use sector_rs.png and g10_proxy.png.'
-            )
-
-        if is_sector:
-            if 'sector_rs' in result:
-                raise ValueError(
-                    'Two screenshots look like Sector RS. '
-                    'Use exactly one sector_rs.png and one g10_proxy.png.'
-                )
-            result['sector_rs'] = p
-
-        elif is_g10:
-            if 'g10_proxy' in result:
-                raise ValueError(
-                    'Two screenshots look like G10. '
-                    'Use exactly one sector_rs.png and one g10_proxy.png.'
-                )
-            result['g10_proxy'] = p
-
-    if set(result.keys()) != {'sector_rs', 'g10_proxy'}:
-        names = ', '.join(p.name for p in paths)
+    # Validated on the user's actual two TradingView screenshots:
+    # Sector title score ~534, G10 ~233.
+    if high_score < 360 or low_score > 360 or (high_score - low_score) < 100:
+        details = ', '.join(f'{p.name}: title-score={s}' for s, p in scored)
         raise ValueError(
-            'Could not identify the two screenshots safely. '
-            'Rename them to sector_rs.png and g10_proxy.png before placing '
-            f'them in Incoming. Found: {names}'
+            'Could not confidently identify the two TradingView screenshots '
+            'from their top-left titles. Refusing to guess. ' + details
         )
 
-    return result
+    return {
+        'sector_rs': sector_candidate,
+        'g10_proxy': g10_candidate
+    }
 
 
 def find_batch():
@@ -206,58 +217,44 @@ def crop_white_padding(im):
 
 def normalize_date_images(date):
     """
-    Crop whitespace only.
+    Crop whitespace and ensure stored filenames match the title INSIDE each image.
 
-    IMPORTANT: Never reclassify or swap stored chart files here.
-    Once ingest() saves sector_rs.png and g10_proxy.png, those names are authoritative.
+    This uses the same top-left title classifier as Incoming ingestion.
+    It never uses filenames, dimensions, aspect ratio, or full-chart colors.
     """
     ddir = IMAGES / date
-    for p in (ddir / 'sector_rs.png', ddir / 'g10_proxy.png'):
-        if p.exists():
-            with Image.open(p) as im:
-                cleaned = crop_white_padding(im)
-                cleaned.save(p)
+    sector = ddir / 'sector_rs.png'
+    g10 = ddir / 'g10_proxy.png'
 
-
-
-def repair_current_swapped_history_once():
-    """
-    One-time migration for the existing corrupted image history.
-
-    The prior build-time visual classifier reversed sector_rs.png and g10_proxy.png.
-    Swap each existing pair exactly once, then persist a metadata flag so future
-    rebuilds never swap them again.
-    """
-    ensure()
-
-    try:
-        meta = json.loads(META.read_text())
-    except Exception:
-        meta = {}
-
-    flag = 'image_history_repaired_v3'
-    if meta.get(flag):
+    if not sector.exists() or not g10.exists():
+        for p in (sector, g10):
+            if p.exists():
+                with Image.open(p) as im:
+                    crop_white_padding(im).save(p)
         return
 
-    if IMAGES.exists():
-        for ddir in IMAGES.iterdir():
-            if not ddir.is_dir():
-                continue
+    tmp_a = ddir / '__chart_a_titlecheck.png'
+    tmp_b = ddir / '__chart_b_titlecheck.png'
 
-            sector = ddir / 'sector_rs.png'
-            g10 = ddir / 'g10_proxy.png'
+    with Image.open(sector) as im:
+        crop_white_padding(im).save(tmp_a)
+    with Image.open(g10) as im:
+        crop_white_padding(im).save(tmp_b)
 
-            if sector.exists() and g10.exists():
-                tmp = ddir / '__swap_tmp__.png'
-                if tmp.exists():
-                    tmp.unlink()
+    try:
+        identified = identify_chart_images([tmp_a, tmp_b])
 
-                sector.replace(tmp)
-                g10.replace(sector)
-                tmp.replace(g10)
+        with Image.open(identified['sector_rs']) as im:
+            sector_img = im.copy()
+        with Image.open(identified['g10_proxy']) as im:
+            g10_img = im.copy()
 
-    meta[flag] = True
-    META.write_text(json.dumps(meta, indent=2))
+        sector_img.save(sector)
+        g10_img.save(g10)
+    finally:
+        tmp_a.unlink(missing_ok=True)
+        tmp_b.unlink(missing_ok=True)
+
 
 def normalize_all_images():
     if not IMAGES.exists():
@@ -324,7 +321,6 @@ def prune_image_history(max_days=5):
 
 def build_html():
     ensure()
-    repair_current_swapped_history_once()
     normalize_all_images()
     prune_image_history(5)
     meta=json.loads(META.read_text())
