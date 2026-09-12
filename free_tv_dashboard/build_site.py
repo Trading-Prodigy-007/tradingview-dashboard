@@ -206,45 +206,58 @@ def crop_white_padding(im):
 
 def normalize_date_images(date):
     """
-    Repair already-stored image pairs by VISUAL CONTENT, then crop whitespace.
+    Crop whitespace only.
 
-    Critical: temporary filenames are neutral so filename hints cannot
-    accidentally defeat the visual classifier.
+    IMPORTANT: Never reclassify or swap stored chart files here.
+    Once ingest() saves sector_rs.png and g10_proxy.png, those names are authoritative.
     """
     ddir = IMAGES / date
-    sector = ddir / 'sector_rs.png'
-    g10 = ddir / 'g10_proxy.png'
+    for p in (ddir / 'sector_rs.png', ddir / 'g10_proxy.png'):
+        if p.exists():
+            with Image.open(p) as im:
+                cleaned = crop_white_padding(im)
+                cleaned.save(p)
 
-    if not sector.exists() or not g10.exists():
-        # Crop whichever exists, but no pair repair is possible.
-        for p in (sector, g10):
-            if p.exists():
-                with Image.open(p) as im:
-                    crop_white_padding(im).save(p)
+
+
+def repair_current_swapped_history_once():
+    """
+    One-time migration for the existing corrupted image history.
+
+    The prior build-time visual classifier reversed sector_rs.png and g10_proxy.png.
+    Swap each existing pair exactly once, then persist a metadata flag so future
+    rebuilds never swap them again.
+    """
+    ensure()
+
+    try:
+        meta = json.loads(META.read_text())
+    except Exception:
+        meta = {}
+
+    flag = 'image_history_repaired_v3'
+    if meta.get(flag):
         return
 
-    tmp_a = ddir / '__chart_a_repair.png'
-    tmp_b = ddir / '__chart_b_repair.png'
+    if IMAGES.exists():
+        for ddir in IMAGES.iterdir():
+            if not ddir.is_dir():
+                continue
 
-    with Image.open(sector) as im:
-        crop_white_padding(im).save(tmp_a)
-    with Image.open(g10) as im:
-        crop_white_padding(im).save(tmp_b)
+            sector = ddir / 'sector_rs.png'
+            g10 = ddir / 'g10_proxy.png'
 
-    # IMPORTANT: this classifier ignores filenames completely.
-    identified = identify_chart_images_by_content([tmp_a, tmp_b])
+            if sector.exists() and g10.exists():
+                tmp = ddir / '__swap_tmp__.png'
+                if tmp.exists():
+                    tmp.unlink()
 
-    with Image.open(identified['sector_rs']) as im:
-        sector_img = im.copy()
-    with Image.open(identified['g10_proxy']) as im:
-        g10_img = im.copy()
+                sector.replace(tmp)
+                g10.replace(sector)
+                tmp.replace(g10)
 
-    sector_img.save(sector)
-    g10_img.save(g10)
-
-    tmp_a.unlink(missing_ok=True)
-    tmp_b.unlink(missing_ok=True)
-
+    meta[flag] = True
+    META.write_text(json.dumps(meta, indent=2))
 
 def normalize_all_images():
     if not IMAGES.exists():
@@ -311,6 +324,7 @@ def prune_image_history(max_days=5):
 
 def build_html():
     ensure()
+    repair_current_swapped_history_once()
     normalize_all_images()
     prune_image_history(5)
     meta=json.loads(META.read_text())
