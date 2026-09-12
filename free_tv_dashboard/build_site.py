@@ -53,15 +53,13 @@ def fmt(col,v):
 
 def chart_color_score(path):
     """
-    Score how 'multicolor' a TradingView screenshot is.
-    Sector RS contains many differently colored sector lines.
-    G10 EL Proxy is mostly gray plus blue/red.
+    Sector RS has many differently colored sector lines.
+    G10 EL Proxy is mostly gray with blue/red overlays.
     """
     with Image.open(path) as im:
         rgb = im.convert('RGB')
         rgb.thumbnail((700, 350))
 
-        # Count pixels that are both colorful and reasonably bright.
         colorful = 0
         total = 0
         hue_bins = set()
@@ -71,14 +69,12 @@ def chart_color_score(path):
             mn = min(r, g, b)
             chroma = mx - mn
 
-            # Ignore the dark TradingView background and gray grid/lines.
             if mx < 55 or chroma < 28:
                 continue
 
             total += 1
             colorful += chroma
 
-            # Coarse color-family signature.
             if r >= g and r >= b:
                 if g > b * 1.35:
                     hue_bins.add('yellow_orange')
@@ -97,14 +93,13 @@ def chart_color_score(path):
                 else:
                     hue_bins.add('blue')
 
-        # Sector RS should have more color families and more colorful pixels.
         return len(hue_bins) * 1_000_000 + colorful + total
 
 
 def identify_chart_images(paths):
     """
     Return {'sector_rs': Path, 'g10_proxy': Path}.
-    Filename hints win when available; otherwise classify by visual content.
+    Filename hints take precedence. Otherwise classify by image content.
     """
     paths = list(paths)
     if len(paths) != 2:
@@ -115,14 +110,16 @@ def identify_chart_images(paths):
 
     for p in paths:
         name = p.stem.lower().replace('-', ' ').replace('_', ' ')
-        if 'sector' in name or 'sector rs' in name:
+        if 'sector' in name:
             result['sector_rs'] = p
         elif 'g10' in name or 'proxy' in name:
             result['g10_proxy'] = p
         else:
             unresolved.append(p)
 
-    # If one was identified by filename, the other is necessarily the other chart.
+    if len(result) == 2:
+        return result
+
     if len(result) == 1 and len(unresolved) == 1:
         if 'sector_rs' in result:
             result['g10_proxy'] = unresolved[0]
@@ -130,15 +127,8 @@ def identify_chart_images(paths):
             result['sector_rs'] = unresolved[0]
         return result
 
-    # If both were explicitly identified, done.
-    if len(result) == 2:
-        return result
-
-    # Otherwise use the chart's visual content, NOT image dimensions.
     scored = sorted(((chart_color_score(p), p) for p in paths), reverse=True)
-    result['sector_rs'] = scored[0][1]
-    result['g10_proxy'] = scored[1][1]
-    return result
+    return {'sector_rs': scored[0][1], 'g10_proxy': scored[1][1]}
 
 def find_batch():
     found={}; dates={}
@@ -170,7 +160,6 @@ def normalize_date_images(date):
     g10 = ddir / 'g10_proxy.png'
     if not sector.exists() or not g10.exists():
         return
-    # Work from temporary cleaned copies, then identify by chart content.
     tmp_sector = ddir / '__tmp_sector.png'
     tmp_g10 = ddir / '__tmp_g10.png'
 
@@ -181,7 +170,6 @@ def normalize_date_images(date):
 
     identified = identify_chart_images([tmp_sector, tmp_g10])
 
-    # Load before overwriting either destination.
     with Image.open(identified['sector_rs']) as im:
         sector_img = im.copy()
     with Image.open(identified['g10_proxy']) as im:
@@ -238,7 +226,7 @@ def render_table(k):
 
 
 def prune_image_history(max_days=5):
-    """Keep only the newest max_days image-date folders and update metadata."""
+    """Keep only the newest max_days chart-history dates."""
     ensure()
     datedirs = [p for p in IMAGES.iterdir() if p.is_dir()]
     datedirs.sort(key=lambda p: p.name, reverse=True)
