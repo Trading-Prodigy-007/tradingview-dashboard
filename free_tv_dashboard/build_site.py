@@ -137,9 +137,30 @@ def render_table(k):
     stats=f'{len(df)} rows' + ('' if k=='relative_volume' else f' · {int(mask.sum())} highlighted')
     return f'''<section class="card" id="{k}"><div class="cardhead"><h2>{html.escape(TITLES[k])}</h2><div class="stats">{stats}</div></div><div class="tablewrap"><table><thead><tr>{cols}</tr></thead><tbody>{''.join(rows)}</tbody></table></div></section>'''
 
+
+def prune_image_history(max_days=5):
+    """Keep only the newest max_days image-date folders and update metadata."""
+    ensure()
+    datedirs = [p for p in IMAGES.iterdir() if p.is_dir()]
+    datedirs.sort(key=lambda p: p.name, reverse=True)
+
+    for old_dir in datedirs[max_days:]:
+        shutil.rmtree(old_dir, ignore_errors=True)
+
+    kept = [p.name for p in datedirs[:max_days]]
+
+    try:
+        meta = json.loads(META.read_text())
+    except Exception:
+        meta = {}
+
+    meta['image_dates'] = kept
+    META.write_text(json.dumps(meta, indent=2))
+
 def build_html():
     ensure()
     normalize_all_images()
+    prune_image_history(5)
     meta=json.loads(META.read_text())
     # Copy accumulated images into docs.
     outimg=DOCS/'images'
