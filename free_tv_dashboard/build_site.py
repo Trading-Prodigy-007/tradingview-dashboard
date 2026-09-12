@@ -96,6 +96,31 @@ def chart_color_score(path):
         return len(hue_bins) * 1_000_000 + colorful + total
 
 
+
+def identify_chart_images_by_content(paths):
+    """
+    Filename-independent repair classifier.
+
+    Sector RS Dashboard has many distinct colored lines/color families.
+    G10 EL Proxy is visually much simpler (primarily gray + blue/red).
+    This function intentionally ignores filenames so it can repair files
+    that are already stored under the wrong names.
+    """
+    paths = list(paths)
+    if len(paths) != 2:
+        raise ValueError("Expected exactly 2 chart screenshots")
+
+    scored = sorted(
+        ((chart_color_score(p), p) for p in paths),
+        key=lambda x: x[0],
+        reverse=True
+    )
+
+    return {
+        'sector_rs': scored[0][1],
+        'g10_proxy': scored[1][1]
+    }
+
 def identify_chart_images(paths):
     """
     Deterministic chart identification.
@@ -181,19 +206,44 @@ def crop_white_padding(im):
 
 def normalize_date_images(date):
     """
-    Clean whitespace only. Never reclassify already-stored screenshots.
-    Stored filenames are authoritative.
+    Repair already-stored image pairs by VISUAL CONTENT, then crop whitespace.
+
+    Critical: temporary filenames are neutral so filename hints cannot
+    accidentally defeat the visual classifier.
     """
     ddir = IMAGES / date
     sector = ddir / 'sector_rs.png'
     g10 = ddir / 'g10_proxy.png'
 
-    for p in (sector, g10):
-        if not p.exists():
-            continue
-        with Image.open(p) as im:
-            cleaned = crop_white_padding(im)
-            cleaned.save(p)
+    if not sector.exists() or not g10.exists():
+        # Crop whichever exists, but no pair repair is possible.
+        for p in (sector, g10):
+            if p.exists():
+                with Image.open(p) as im:
+                    crop_white_padding(im).save(p)
+        return
+
+    tmp_a = ddir / '__chart_a_repair.png'
+    tmp_b = ddir / '__chart_b_repair.png'
+
+    with Image.open(sector) as im:
+        crop_white_padding(im).save(tmp_a)
+    with Image.open(g10) as im:
+        crop_white_padding(im).save(tmp_b)
+
+    # IMPORTANT: this classifier ignores filenames completely.
+    identified = identify_chart_images_by_content([tmp_a, tmp_b])
+
+    with Image.open(identified['sector_rs']) as im:
+        sector_img = im.copy()
+    with Image.open(identified['g10_proxy']) as im:
+        g10_img = im.copy()
+
+    sector_img.save(sector)
+    g10_img.save(g10)
+
+    tmp_a.unlink(missing_ok=True)
+    tmp_b.unlink(missing_ok=True)
 
 
 def normalize_all_images():
