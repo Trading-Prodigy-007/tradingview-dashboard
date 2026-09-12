@@ -50,6 +50,96 @@ def fmt(col,v):
         return f'{v:.4g}'
     return str(v)
 
+
+def chart_color_score(path):
+    """
+    Score how 'multicolor' a TradingView screenshot is.
+    Sector RS contains many differently colored sector lines.
+    G10 EL Proxy is mostly gray plus blue/red.
+    """
+    with Image.open(path) as im:
+        rgb = im.convert('RGB')
+        rgb.thumbnail((700, 350))
+
+        # Count pixels that are both colorful and reasonably bright.
+        colorful = 0
+        total = 0
+        hue_bins = set()
+
+        for r, g, b in rgb.getdata():
+            mx = max(r, g, b)
+            mn = min(r, g, b)
+            chroma = mx - mn
+
+            # Ignore the dark TradingView background and gray grid/lines.
+            if mx < 55 or chroma < 28:
+                continue
+
+            total += 1
+            colorful += chroma
+
+            # Coarse color-family signature.
+            if r >= g and r >= b:
+                if g > b * 1.35:
+                    hue_bins.add('yellow_orange')
+                elif b > g * 1.2:
+                    hue_bins.add('magenta')
+                else:
+                    hue_bins.add('red')
+            elif g >= r and g >= b:
+                if b > r * 1.2:
+                    hue_bins.add('cyan_green')
+                else:
+                    hue_bins.add('green')
+            else:
+                if r > g * 1.2:
+                    hue_bins.add('purple')
+                else:
+                    hue_bins.add('blue')
+
+        # Sector RS should have more color families and more colorful pixels.
+        return len(hue_bins) * 1_000_000 + colorful + total
+
+
+def identify_chart_images(paths):
+    """
+    Return {'sector_rs': Path, 'g10_proxy': Path}.
+    Filename hints win when available; otherwise classify by visual content.
+    """
+    paths = list(paths)
+    if len(paths) != 2:
+        raise ValueError("Expected exactly 2 chart screenshots")
+
+    result = {}
+    unresolved = []
+
+    for p in paths:
+        name = p.stem.lower().replace('-', ' ').replace('_', ' ')
+        if 'sector' in name or 'sector rs' in name:
+            result['sector_rs'] = p
+        elif 'g10' in name or 'proxy' in name:
+            result['g10_proxy'] = p
+        else:
+            unresolved.append(p)
+
+    # If one was identified by filename, the other is necessarily the other chart.
+    if len(result) == 1 and len(unresolved) == 1:
+        if 'sector_rs' in result:
+            result['g10_proxy'] = unresolved[0]
+        else:
+            result['sector_rs'] = unresolved[0]
+        return result
+
+    # If both were explicitly identified, done.
+    if len(result) == 2:
+        return result
+
+    # Otherwise use the chart's visual content, NOT image dimensions.
+    scored = sorted(((chart_color_score(p), p) for p in paths), reverse=True)
+    result['sector_rs'] = scored[0][1]
+    result['g10_proxy'] = scored[1][1]
+    return result
+
 def find_batch():
     found={}; dates={}
     for p in INCOMING.glob('*.csv'):
@@ -62,13 +152,8 @@ def find_batch():
     imgs=[p for p in INCOMING.iterdir() if p.is_file() and p.suffix.lower() in {'.png','.jpg','.jpeg','.webp'}]
     if len(imgs)<2: return None, 'Waiting for 2 screenshots'
     imgs=sorted(imgs,key=lambda p:p.stat().st_mtime,reverse=True)[:2]
-    dims=[]
-    for p in imgs:
-        with Image.open(p) as im:
-            ratio = im.width / im.height
-            dims.append((p, ratio))
-    dims.sort(key=lambda x:x[1], reverse=True)
-    return (date,found,{'sector_rs':dims[0][0],'g10_proxy':dims[1][0]}), None
+    chart_map = identify_chart_images(imgs)
+    return (date,found,chart_map), None
 
 
 def crop_white_padding(im):
@@ -85,14 +170,28 @@ def normalize_date_images(date):
     g10 = ddir / 'g10_proxy.png'
     if not sector.exists() or not g10.exists():
         return
-    items=[]
-    for p in (sector, g10):
-        with Image.open(p) as im:
-            cleaned = crop_white_padding(im)
-            items.append((cleaned.width / cleaned.height, cleaned.copy()))
-    items.sort(key=lambda x: x[0], reverse=True)
-    items[0][1].save(sector)
-    items[1][1].save(g10)
+    # Work from temporary cleaned copies, then identify by chart content.
+    tmp_sector = ddir / '__tmp_sector.png'
+    tmp_g10 = ddir / '__tmp_g10.png'
+
+    with Image.open(sector) as im:
+        crop_white_padding(im).save(tmp_sector)
+    with Image.open(g10) as im:
+        crop_white_padding(im).save(tmp_g10)
+
+    identified = identify_chart_images([tmp_sector, tmp_g10])
+
+    # Load before overwriting either destination.
+    with Image.open(identified['sector_rs']) as im:
+        sector_img = im.copy()
+    with Image.open(identified['g10_proxy']) as im:
+        g10_img = im.copy()
+
+    sector_img.save(sector)
+    g10_img.save(g10)
+
+    tmp_sector.unlink(missing_ok=True)
+    tmp_g10.unlink(missing_ok=True)
 
 def normalize_all_images():
     if not IMAGES.exists():
