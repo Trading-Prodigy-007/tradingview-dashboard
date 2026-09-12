@@ -237,10 +237,159 @@ def build_html():
       });
     });
   });
+
+
+  function storageKey(sectionId) {
+    return 'tv-dashboard-hidden-columns:' + sectionId;
+  }
+
+  function readHidden(sectionId) {
+    try {
+      var value = JSON.parse(localStorage.getItem(storageKey(sectionId)) || '[]');
+      return Array.isArray(value) ? value : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveHidden(sectionId, hidden) {
+    try {
+      localStorage.setItem(storageKey(sectionId), JSON.stringify(hidden));
+    } catch (e) {}
+  }
+
+  function setColumnVisible(table, columnIndex, visible) {
+    table.querySelectorAll('tr').forEach(function (row) {
+      var cell = row.children[columnIndex];
+      if (cell) cell.style.display = visible ? '' : 'none';
+    });
+  }
+
+  function applyHiddenColumns(section, table) {
+    var hidden = readHidden(section.id);
+    var headers = Array.from(table.querySelectorAll('thead th'));
+    headers.forEach(function (_, i) {
+      setColumnVisible(table, i, hidden.indexOf(i) === -1);
+    });
+  }
+
+  document.querySelectorAll('section.card[id] table').forEach(function (table) {
+    var section = table.closest('section.card');
+    var cardhead = section.querySelector('.cardhead');
+    if (!section || !cardhead) return;
+
+    var stats = cardhead.querySelector('.stats');
+    var actions = document.createElement('div');
+    actions.className = 'cardhead-actions';
+
+    if (stats) {
+      stats.parentNode.insertBefore(actions, stats);
+      actions.appendChild(stats);
+    } else {
+      cardhead.appendChild(actions);
+    }
+
+    var picker = document.createElement('div');
+    picker.className = 'column-picker';
+
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'column-btn';
+    button.textContent = 'Columns';
+    button.setAttribute('aria-expanded', 'false');
+
+    var menu = document.createElement('div');
+    menu.className = 'column-menu';
+
+    var title = document.createElement('div');
+    title.className = 'column-menu-title';
+    title.textContent = 'Show / hide columns';
+    menu.appendChild(title);
+
+    var headers = Array.from(table.querySelectorAll('thead th'));
+    var hidden = readHidden(section.id);
+
+    headers.forEach(function (th, i) {
+      var label = document.createElement('label');
+      label.className = 'column-option';
+
+      var checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = hidden.indexOf(i) === -1;
+
+      var span = document.createElement('span');
+      span.textContent = th.textContent.trim();
+
+      checkbox.addEventListener('change', function () {
+        var current = readHidden(section.id);
+        if (checkbox.checked) {
+          current = current.filter(function (x) { return x !== i; });
+        } else if (current.indexOf(i) === -1) {
+          current.push(i);
+        }
+        current.sort(function (a, b) { return a - b; });
+        saveHidden(section.id, current);
+        setColumnVisible(table, i, checkbox.checked);
+      });
+
+      label.appendChild(checkbox);
+      label.appendChild(span);
+      menu.appendChild(label);
+    });
+
+    var footer = document.createElement('div');
+    footer.className = 'column-menu-footer';
+
+    var reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'column-reset';
+    reset.textContent = 'Show all';
+    reset.addEventListener('click', function () {
+      saveHidden(section.id, []);
+      menu.querySelectorAll('input[type="checkbox"]').forEach(function (cb, i) {
+        cb.checked = true;
+        setColumnVisible(table, i, true);
+      });
+    });
+
+    footer.appendChild(reset);
+    menu.appendChild(footer);
+
+    button.addEventListener('click', function (event) {
+      event.stopPropagation();
+      var opening = !menu.classList.contains('open');
+
+      document.querySelectorAll('.column-menu.open').forEach(function (other) {
+        if (other !== menu) other.classList.remove('open');
+      });
+
+      menu.classList.toggle('open', opening);
+      button.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    });
+
+    menu.addEventListener('click', function (event) {
+      event.stopPropagation();
+    });
+
+    picker.appendChild(button);
+    picker.appendChild(menu);
+    actions.appendChild(picker);
+
+    applyHiddenColumns(section, table);
+  });
+
+  document.addEventListener('click', function () {
+    document.querySelectorAll('.column-menu.open').forEach(function (menu) {
+      menu.classList.remove('open');
+    });
+    document.querySelectorAll('.column-btn').forEach(function (button) {
+      button.setAttribute('aria-expanded', 'false');
+    });
+  });
 })();
 </script>"""
     page=f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Daily TradingView Screener Dashboard</title><style>
-:root{{--bg:#0f172a;--panel:#111827;--panel2:#182235;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--yellow:#fde047;--yellowText:#111827}}*{{box-sizing:border-box}}body{{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--text)}}.wrap{{max-width:1900px;margin:0 auto;padding:24px}}h1{{margin:0 0 6px;font-size:28px}}.sub{{color:var(--muted);margin-bottom:22px}}.nav{{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 24px;position:sticky;top:0;background:rgba(15,23,42,.96);padding:10px 0;z-index:10}}.nav a{{text-decoration:none;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:24px;overflow:hidden}}.cardhead{{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}}.cardhead h2{{margin:0;font-size:18px}}.stats{{color:var(--muted);font-size:13px;white-space:nowrap}}.tablewrap{{overflow:auto;max-height:72vh}}table{{border-collapse:separate;border-spacing:0;min-width:100%;width:max-content;font-size:12px}}th,td{{padding:7px 9px;border-right:1px solid #263244;border-bottom:1px solid #263244;white-space:nowrap}}th{{position:sticky;top:0;background:#1e293b;z-index:2;text-align:left;font-weight:700;cursor:pointer;user-select:none;padding-right:24px}}th.sort-asc::after{{content:' ▲';position:absolute;right:7px;color:#93c5fd}}th.sort-desc::after{{content:' ▼';position:absolute;right:7px;color:#93c5fd}}th:hover{{background:#26354d}}tbody tr:hover td{{background:#1b273a}}tbody tr.highlight td{{background:var(--yellow);color:var(--yellowText);font-weight:600}}tbody tr.highlight:hover td{{background:#facc15}}.image-date{{margin-bottom:28px}}.image-date h3{{font-size:16px;margin:0 0 10px;color:#cbd5e1}}.image-block{{margin-bottom:14px;height:auto;min-height:0;overflow:hidden}}.image-block .label{{color:var(--muted);font-size:13px;margin-bottom:6px}}.image-block img{{display:block;width:100%;height:auto;max-height:none;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:transparent}}@media(max-width:700px){{.wrap{{padding:12px}}h1{{font-size:22px}}.cardhead{{align-items:flex-start;flex-direction:column}}}}
+:root{{--bg:#0f172a;--panel:#111827;--panel2:#182235;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--yellow:#fde047;--yellowText:#111827}}*{{box-sizing:border-box}}body{{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--text)}}.wrap{{max-width:1900px;margin:0 auto;padding:24px}}h1{{margin:0 0 6px;font-size:28px}}.sub{{color:var(--muted);margin-bottom:22px}}.nav{{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 24px;position:sticky;top:0;background:rgba(15,23,42,.96);padding:10px 0;z-index:10}}.nav a{{text-decoration:none;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:24px;overflow:hidden}}.cardhead{{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}}.cardhead h2{{margin:0;font-size:18px}}.stats{{color:var(--muted);font-size:13px;white-space:nowrap}}.tablewrap{{overflow:auto;max-height:72vh}}table{{border-collapse:separate;border-spacing:0;min-width:100%;width:max-content;font-size:12px}}th,td{{padding:7px 9px;border-right:1px solid #263244;border-bottom:1px solid #263244;white-space:nowrap}}th{{position:sticky;top:0;background:#1e293b;z-index:2;text-align:left;font-weight:700;cursor:pointer;user-select:none;padding-right:24px}}th.sort-asc::after{{content:' ▲';position:absolute;right:7px;color:#93c5fd}}th.sort-desc::after{{content:' ▼';position:absolute;right:7px;color:#93c5fd}}th:hover{{background:#26354d}}.cardhead-actions{{display:flex;align-items:center;gap:10px}}.column-picker{{position:relative}}.column-btn{{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer}}.column-btn:hover{{background:#26354d}}.column-menu{{display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:min(360px,80vw);max-height:420px;overflow:auto;background:#111827;border:1px solid var(--line);border-radius:9px;box-shadow:0 14px 35px rgba(0,0,0,.45);padding:10px}}.column-menu.open{{display:block}}.column-menu-title{{font-size:12px;font-weight:700;margin:2px 4px 8px;color:#cbd5e1}}.column-option{{display:flex;align-items:flex-start;gap:8px;padding:6px 4px;font-size:12px;line-height:1.25;cursor:pointer;border-radius:5px}}.column-option:hover{{background:#1e293b}}.column-option input{{margin-top:2px;flex:0 0 auto}}.column-menu-footer{{display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--line);margin-top:8px;padding-top:8px}}.column-reset{{border:1px solid var(--line);background:transparent;color:#cbd5e1;border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer}}tbody tr:hover td{{background:#1b273a}}tbody tr.highlight td{{background:var(--yellow);color:var(--yellowText);font-weight:600}}tbody tr.highlight:hover td{{background:#facc15}}.image-date{{margin-bottom:28px}}.image-date h3{{font-size:16px;margin:0 0 10px;color:#cbd5e1}}.image-block{{margin-bottom:14px;height:auto;min-height:0;overflow:hidden}}.image-block .label{{color:var(--muted);font-size:13px;margin-bottom:6px}}.image-block img{{display:block;width:100%;height:auto;max-height:none;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:transparent}}@media(max-width:700px){{.wrap{{padding:12px}}h1{{font-size:22px}}.cardhead{{align-items:flex-start;flex-direction:column}}}}
 </style></head><body><div class="wrap"><h1>Daily TradingView Screener Dashboard</h1><div class="sub">Latest screener data: <strong>{meta.get('latest_date') or 'No data uploaded yet'}</strong>. Yellow rows = Quarterly YoY revenue growth &gt; TTM YoY revenue growth.</div><div class="nav">{nav}</div>{tables}<section class="card" id="charts"><div class="cardhead"><h2>TradingView Chart History</h2><div class="stats">Images accumulate by date</div></div><div style="padding:16px">{''.join(image_blocks) or '<div class="empty">No chart images yet.</div>'}</div></section></div>{sort_js}</body></html>'''
     (DOCS/'index.html').write_text(page,encoding='utf-8')
 
