@@ -2,7 +2,7 @@ import json, re, shutil, time, html
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageChops
 
 BASE = Path(__file__).resolve().parent
 REPO_ROOT = BASE.parent
@@ -67,9 +67,39 @@ def find_batch():
         with Image.open(p) as im:
             ratio = im.width / im.height
             dims.append((p, ratio))
-    # Sector RS is the much wider/shorter screenshot; G10 is the taller one.
     dims.sort(key=lambda x:x[1], reverse=True)
     return (date,found,{'sector_rs':dims[0][0],'g10_proxy':dims[1][0]}), None
+
+
+def crop_white_padding(im):
+    rgb = im.convert('RGB')
+    white = Image.new('RGB', rgb.size, (255,255,255))
+    diff = ImageChops.difference(rgb, white).convert('L')
+    mask = diff.point(lambda p: 255 if p > 18 else 0)
+    bbox = mask.getbbox()
+    return rgb.crop(bbox) if bbox else rgb
+
+def normalize_date_images(date):
+    ddir = IMAGES / date
+    sector = ddir / 'sector_rs.png'
+    g10 = ddir / 'g10_proxy.png'
+    if not sector.exists() or not g10.exists():
+        return
+    items=[]
+    for p in (sector, g10):
+        with Image.open(p) as im:
+            cleaned = crop_white_padding(im)
+            items.append((cleaned.width / cleaned.height, cleaned.copy()))
+    items.sort(key=lambda x: x[0], reverse=True)
+    items[0][1].save(sector)
+    items[1][1].save(g10)
+
+def normalize_all_images():
+    if not IMAGES.exists():
+        return
+    for d in IMAGES.iterdir():
+        if d.is_dir():
+            normalize_date_images(d.name)
 
 def ingest(batch):
     date,found,imgs=batch
@@ -78,7 +108,8 @@ def ingest(batch):
     for k,p in imgs.items():
         ext='.png'
         # Convert to PNG so HTML paths stay stable.
-        with Image.open(p) as im: im.convert('RGB').save(ddir/f'{k}{ext}')
+        with Image.open(p) as im:
+            crop_white_padding(im).save(ddir/f'{k}{ext}')
     meta=json.loads(META.read_text())
     meta['latest_date']=date
     ds=set(meta.get('image_dates',[])); ds.add(date); meta['image_dates']=sorted(ds)
@@ -108,6 +139,7 @@ def render_table(k):
 
 def build_html():
     ensure()
+    normalize_all_images()
     meta=json.loads(META.read_text())
     # Copy accumulated images into docs.
     outimg=DOCS/'images'
@@ -122,7 +154,7 @@ def build_html():
             if (IMAGES/d/fn).exists(): parts.append(f'<div class="image-block"><div class="label">{label}</div><img src="images/{d}/{fn}" loading="lazy"></div>')
         if parts: image_blocks.append(f'<div class="image-date"><h3>{d}</h3>{"".join(parts)}</div>')
     page=f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Daily TradingView Screener Dashboard</title><style>
-:root{{--bg:#0f172a;--panel:#111827;--panel2:#182235;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--yellow:#fde047;--yellowText:#111827}}*{{box-sizing:border-box}}body{{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--text)}}.wrap{{max-width:1900px;margin:0 auto;padding:24px}}h1{{margin:0 0 6px;font-size:28px}}.sub{{color:var(--muted);margin-bottom:22px}}.nav{{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 24px;position:sticky;top:0;background:rgba(15,23,42,.96);padding:10px 0;z-index:10}}.nav a{{text-decoration:none;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:24px;overflow:hidden}}.cardhead{{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}}.cardhead h2{{margin:0;font-size:18px}}.stats{{color:var(--muted);font-size:13px;white-space:nowrap}}.tablewrap{{overflow:auto;max-height:72vh}}table{{border-collapse:separate;border-spacing:0;min-width:100%;width:max-content;font-size:12px}}th,td{{padding:7px 9px;border-right:1px solid #263244;border-bottom:1px solid #263244;white-space:nowrap}}th{{position:sticky;top:0;background:#1e293b;z-index:2;text-align:left;font-weight:700}}tbody tr:hover td{{background:#1b273a}}tbody tr.highlight td{{background:var(--yellow);color:var(--yellowText);font-weight:600}}tbody tr.highlight:hover td{{background:#facc15}}.image-date{{margin-bottom:28px}}.image-date h3{{font-size:16px;margin:0 0 10px;color:#cbd5e1}}.image-block{{margin-bottom:14px;height:auto;min-height:0}}.image-block .label{{color:var(--muted);font-size:13px;margin-bottom:6px}}.image-block img{{width:100%;height:auto;max-height:none;object-fit:contain;border:1px solid var(--line);border-radius:8px;display:block;background:transparent}}@media(max-width:700px){{.wrap{{padding:12px}}h1{{font-size:22px}}.cardhead{{align-items:flex-start;flex-direction:column}}}}
+:root{{--bg:#0f172a;--panel:#111827;--panel2:#182235;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--yellow:#fde047;--yellowText:#111827}}*{{box-sizing:border-box}}body{{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--text)}}.wrap{{max-width:1900px;margin:0 auto;padding:24px}}h1{{margin:0 0 6px;font-size:28px}}.sub{{color:var(--muted);margin-bottom:22px}}.nav{{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 24px;position:sticky;top:0;background:rgba(15,23,42,.96);padding:10px 0;z-index:10}}.nav a{{text-decoration:none;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:24px;overflow:hidden}}.cardhead{{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}}.cardhead h2{{margin:0;font-size:18px}}.stats{{color:var(--muted);font-size:13px;white-space:nowrap}}.tablewrap{{overflow:auto;max-height:72vh}}table{{border-collapse:separate;border-spacing:0;min-width:100%;width:max-content;font-size:12px}}th,td{{padding:7px 9px;border-right:1px solid #263244;border-bottom:1px solid #263244;white-space:nowrap}}th{{position:sticky;top:0;background:#1e293b;z-index:2;text-align:left;font-weight:700}}tbody tr:hover td{{background:#1b273a}}tbody tr.highlight td{{background:var(--yellow);color:var(--yellowText);font-weight:600}}tbody tr.highlight:hover td{{background:#facc15}}.image-date{{margin-bottom:28px}}.image-date h3{{font-size:16px;margin:0 0 10px;color:#cbd5e1}}.image-block{{margin-bottom:14px;height:auto;min-height:0;overflow:hidden}}.image-block .label{{color:var(--muted);font-size:13px;margin-bottom:6px}}.image-block img{{display:block;width:100%;height:auto;max-height:none;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:transparent}}@media(max-width:700px){{.wrap{{padding:12px}}h1{{font-size:22px}}.cardhead{{align-items:flex-start;flex-direction:column}}}}
 </style></head><body><div class="wrap"><h1>Daily TradingView Screener Dashboard</h1><div class="sub">Latest screener data: <strong>{meta.get('latest_date') or 'No data uploaded yet'}</strong>. Yellow rows = Quarterly YoY revenue growth &gt; TTM YoY revenue growth.</div><div class="nav">{nav}</div>{tables}<section class="card" id="charts"><div class="cardhead"><h2>TradingView Chart History</h2><div class="stats">Images accumulate by date</div></div><div style="padding:16px">{''.join(image_blocks) or '<div class="empty">No chart images yet.</div>'}</div></section></div></body></html>'''
     (DOCS/'index.html').write_text(page,encoding='utf-8')
 
