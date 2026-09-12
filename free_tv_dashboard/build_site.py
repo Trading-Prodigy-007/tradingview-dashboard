@@ -98,37 +98,59 @@ def chart_color_score(path):
 
 def identify_chart_images(paths):
     """
-    Return {'sector_rs': Path, 'g10_proxy': Path}.
-    Filename hints take precedence. Otherwise classify by image content.
+    Deterministic chart identification.
+
+    Required filename hints:
+      - Sector RS screenshot: filename must contain "sector"
+      - G10 screenshot: filename must contain "g10" or "proxy"
+
+    The automation NEVER guesses from dimensions or visual appearance.
+    If filenames are ambiguous, publishing stops instead of risking a swap.
     """
     paths = list(paths)
     if len(paths) != 2:
         raise ValueError("Expected exactly 2 chart screenshots")
 
     result = {}
-    unresolved = []
 
     for p in paths:
         name = p.stem.lower().replace('-', ' ').replace('_', ' ')
-        if 'sector' in name:
+
+        is_sector = 'sector' in name
+        is_g10 = ('g10' in name) or ('proxy' in name)
+
+        if is_sector and is_g10:
+            raise ValueError(
+                f'Ambiguous screenshot filename: {p.name}. '
+                'Use sector_rs.png and g10_proxy.png.'
+            )
+
+        if is_sector:
+            if 'sector_rs' in result:
+                raise ValueError(
+                    'Two screenshots look like Sector RS. '
+                    'Use exactly one sector_rs.png and one g10_proxy.png.'
+                )
             result['sector_rs'] = p
-        elif 'g10' in name or 'proxy' in name:
+
+        elif is_g10:
+            if 'g10_proxy' in result:
+                raise ValueError(
+                    'Two screenshots look like G10. '
+                    'Use exactly one sector_rs.png and one g10_proxy.png.'
+                )
             result['g10_proxy'] = p
-        else:
-            unresolved.append(p)
 
-    if len(result) == 2:
-        return result
+    if set(result.keys()) != {'sector_rs', 'g10_proxy'}:
+        names = ', '.join(p.name for p in paths)
+        raise ValueError(
+            'Could not identify the two screenshots safely. '
+            'Rename them to sector_rs.png and g10_proxy.png before placing '
+            f'them in Incoming. Found: {names}'
+        )
 
-    if len(result) == 1 and len(unresolved) == 1:
-        if 'sector_rs' in result:
-            result['g10_proxy'] = unresolved[0]
-        else:
-            result['sector_rs'] = unresolved[0]
-        return result
+    return result
 
-    scored = sorted(((chart_color_score(p), p) for p in paths), reverse=True)
-    return {'sector_rs': scored[0][1], 'g10_proxy': scored[1][1]}
 
 def find_batch():
     found={}; dates={}
@@ -142,7 +164,10 @@ def find_batch():
     imgs=[p for p in INCOMING.iterdir() if p.is_file() and p.suffix.lower() in {'.png','.jpg','.jpeg','.webp'}]
     if len(imgs)<2: return None, 'Waiting for 2 screenshots'
     imgs=sorted(imgs,key=lambda p:p.stat().st_mtime,reverse=True)[:2]
-    chart_map = identify_chart_images(imgs)
+    try:
+        chart_map = identify_chart_images(imgs)
+    except ValueError as e:
+        return None, str(e)
     return (date,found,chart_map), None
 
 
@@ -155,31 +180,21 @@ def crop_white_padding(im):
     return rgb.crop(bbox) if bbox else rgb
 
 def normalize_date_images(date):
+    """
+    Clean whitespace only. Never reclassify already-stored screenshots.
+    Stored filenames are authoritative.
+    """
     ddir = IMAGES / date
     sector = ddir / 'sector_rs.png'
     g10 = ddir / 'g10_proxy.png'
-    if not sector.exists() or not g10.exists():
-        return
-    tmp_sector = ddir / '__tmp_sector.png'
-    tmp_g10 = ddir / '__tmp_g10.png'
 
-    with Image.open(sector) as im:
-        crop_white_padding(im).save(tmp_sector)
-    with Image.open(g10) as im:
-        crop_white_padding(im).save(tmp_g10)
+    for p in (sector, g10):
+        if not p.exists():
+            continue
+        with Image.open(p) as im:
+            cleaned = crop_white_padding(im)
+            cleaned.save(p)
 
-    identified = identify_chart_images([tmp_sector, tmp_g10])
-
-    with Image.open(identified['sector_rs']) as im:
-        sector_img = im.copy()
-    with Image.open(identified['g10_proxy']) as im:
-        g10_img = im.copy()
-
-    sector_img.save(sector)
-    g10_img.save(g10)
-
-    tmp_sector.unlink(missing_ok=True)
-    tmp_g10.unlink(missing_ok=True)
 
 def normalize_all_images():
     if not IMAGES.exists():
