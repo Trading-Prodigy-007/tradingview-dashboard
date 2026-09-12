@@ -153,9 +153,95 @@ def build_html():
         for label,fn in [('Sector RS Dashboard vs SPY','sector_rs.png'),('G10 EL Proxy','g10_proxy.png')]:
             if (IMAGES/d/fn).exists(): parts.append(f'<div class="image-block"><div class="label">{label}</div><img src="images/{d}/{fn}" loading="lazy"></div>')
         if parts: image_blocks.append(f'<div class="image-date"><h3>{d}</h3>{"".join(parts)}</div>')
+    sort_js = r"""<script>
+(function () {
+  function parseValue(raw) {
+    var s = (raw || '').trim();
+    if (s === '') return {type: 'empty', value: ''};
+
+    if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
+
+    var cleaned = s.replace(/[$,%]/g, '').replace(/,/g, '').trim();
+    var m = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*([KMBT])?$/i);
+    if (m) {
+      var n = parseFloat(m[1]);
+      var suffix = (m[2] || '').toUpperCase();
+      var mult = suffix === 'K' ? 1e3 :
+                 suffix === 'M' ? 1e6 :
+                 suffix === 'B' ? 1e9 :
+                 suffix === 'T' ? 1e12 : 1;
+      return {type: 'number', value: n * mult};
+    }
+
+    var time = Date.parse(s);
+    if (!isNaN(time) && /[-\/]/.test(s)) {
+      return {type: 'date', value: time};
+    }
+
+    return {type: 'text', value: s.toLowerCase()};
+  }
+
+  function compare(a, b, direction) {
+    var av = parseValue(a);
+    var bv = parseValue(b);
+
+    if (av.type === 'empty' && bv.type === 'empty') return 0;
+    if (av.type === 'empty') return 1;
+    if (bv.type === 'empty') return -1;
+
+    var result;
+    if (av.type === bv.type && (av.type === 'number' || av.type === 'date')) {
+      result = av.value - bv.value;
+    } else {
+      result = String(av.value).localeCompare(String(bv.value), undefined, {
+        numeric: true,
+        sensitivity: 'base'
+      });
+    }
+    return direction === 'asc' ? result : -result;
+  }
+
+  document.querySelectorAll('table').forEach(function (table) {
+    var headers = table.querySelectorAll('thead th');
+
+    headers.forEach(function (th, columnIndex) {
+      th.title = 'Click to sort';
+
+      th.addEventListener('click', function () {
+        var direction = th.getAttribute('data-sort-dir') === 'asc' ? 'desc' : 'asc';
+
+        headers.forEach(function (h) {
+          h.removeAttribute('data-sort-dir');
+          h.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        th.setAttribute('data-sort-dir', direction);
+        th.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        var tbody = table.querySelector('tbody');
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+
+        rows.sort(function (rowA, rowB) {
+          var cellA = rowA.children[columnIndex];
+          var cellB = rowB.children[columnIndex];
+          return compare(
+            cellA ? cellA.textContent : '',
+            cellB ? cellB.textContent : '',
+            direction
+          );
+        });
+
+        rows.forEach(function (row) {
+          tbody.appendChild(row);
+        });
+      });
+    });
+  });
+})();
+</script>"""
     page=f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Daily TradingView Screener Dashboard</title><style>
-:root{{--bg:#0f172a;--panel:#111827;--panel2:#182235;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--yellow:#fde047;--yellowText:#111827}}*{{box-sizing:border-box}}body{{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--text)}}.wrap{{max-width:1900px;margin:0 auto;padding:24px}}h1{{margin:0 0 6px;font-size:28px}}.sub{{color:var(--muted);margin-bottom:22px}}.nav{{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 24px;position:sticky;top:0;background:rgba(15,23,42,.96);padding:10px 0;z-index:10}}.nav a{{text-decoration:none;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:24px;overflow:hidden}}.cardhead{{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}}.cardhead h2{{margin:0;font-size:18px}}.stats{{color:var(--muted);font-size:13px;white-space:nowrap}}.tablewrap{{overflow:auto;max-height:72vh}}table{{border-collapse:separate;border-spacing:0;min-width:100%;width:max-content;font-size:12px}}th,td{{padding:7px 9px;border-right:1px solid #263244;border-bottom:1px solid #263244;white-space:nowrap}}th{{position:sticky;top:0;background:#1e293b;z-index:2;text-align:left;font-weight:700}}tbody tr:hover td{{background:#1b273a}}tbody tr.highlight td{{background:var(--yellow);color:var(--yellowText);font-weight:600}}tbody tr.highlight:hover td{{background:#facc15}}.image-date{{margin-bottom:28px}}.image-date h3{{font-size:16px;margin:0 0 10px;color:#cbd5e1}}.image-block{{margin-bottom:14px;height:auto;min-height:0;overflow:hidden}}.image-block .label{{color:var(--muted);font-size:13px;margin-bottom:6px}}.image-block img{{display:block;width:100%;height:auto;max-height:none;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:transparent}}@media(max-width:700px){{.wrap{{padding:12px}}h1{{font-size:22px}}.cardhead{{align-items:flex-start;flex-direction:column}}}}
-</style></head><body><div class="wrap"><h1>Daily TradingView Screener Dashboard</h1><div class="sub">Latest screener data: <strong>{meta.get('latest_date') or 'No data uploaded yet'}</strong>. Yellow rows = Quarterly YoY revenue growth &gt; TTM YoY revenue growth.</div><div class="nav">{nav}</div>{tables}<section class="card" id="charts"><div class="cardhead"><h2>TradingView Chart History</h2><div class="stats">Images accumulate by date</div></div><div style="padding:16px">{''.join(image_blocks) or '<div class="empty">No chart images yet.</div>'}</div></section></div></body></html>'''
+:root{{--bg:#0f172a;--panel:#111827;--panel2:#182235;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--yellow:#fde047;--yellowText:#111827}}*{{box-sizing:border-box}}body{{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--text)}}.wrap{{max-width:1900px;margin:0 auto;padding:24px}}h1{{margin:0 0 6px;font-size:28px}}.sub{{color:var(--muted);margin-bottom:22px}}.nav{{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 24px;position:sticky;top:0;background:rgba(15,23,42,.96);padding:10px 0;z-index:10}}.nav a{{text-decoration:none;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}}.card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:24px;overflow:hidden}}.cardhead{{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}}.cardhead h2{{margin:0;font-size:18px}}.stats{{color:var(--muted);font-size:13px;white-space:nowrap}}.tablewrap{{overflow:auto;max-height:72vh}}table{{border-collapse:separate;border-spacing:0;min-width:100%;width:max-content;font-size:12px}}th,td{{padding:7px 9px;border-right:1px solid #263244;border-bottom:1px solid #263244;white-space:nowrap}}th{{position:sticky;top:0;background:#1e293b;z-index:2;text-align:left;font-weight:700;cursor:pointer;user-select:none;padding-right:24px}}th.sort-asc::after{{content:' ▲';position:absolute;right:7px;color:#93c5fd}}th.sort-desc::after{{content:' ▼';position:absolute;right:7px;color:#93c5fd}}th:hover{{background:#26354d}}tbody tr:hover td{{background:#1b273a}}tbody tr.highlight td{{background:var(--yellow);color:var(--yellowText);font-weight:600}}tbody tr.highlight:hover td{{background:#facc15}}.image-date{{margin-bottom:28px}}.image-date h3{{font-size:16px;margin:0 0 10px;color:#cbd5e1}}.image-block{{margin-bottom:14px;height:auto;min-height:0;overflow:hidden}}.image-block .label{{color:var(--muted);font-size:13px;margin-bottom:6px}}.image-block img{{display:block;width:100%;height:auto;max-height:none;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:transparent}}@media(max-width:700px){{.wrap{{padding:12px}}h1{{font-size:22px}}.cardhead{{align-items:flex-start;flex-direction:column}}}}
+</style></head><body><div class="wrap"><h1>Daily TradingView Screener Dashboard</h1><div class="sub">Latest screener data: <strong>{meta.get('latest_date') or 'No data uploaded yet'}</strong>. Yellow rows = Quarterly YoY revenue growth &gt; TTM YoY revenue growth.</div><div class="nav">{nav}</div>{tables}<section class="card" id="charts"><div class="cardhead"><h2>TradingView Chart History</h2><div class="stats">Images accumulate by date</div></div><div style="padding:16px">{''.join(image_blocks) or '<div class="empty">No chart images yet.</div>'}</div></section></div>{sort_js}</body></html>'''
     (DOCS/'index.html').write_text(page,encoding='utf-8')
 
     # Publish the generated static site to the Git repository root.
