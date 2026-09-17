@@ -1,9 +1,9 @@
 {
-  "latest_date": "2026-09-16",
   "image_dates": [
+    "2026-09-17",
     "2026-09-16",
     "2026-09-14",
     "2026-09-11"
   ],
-  "image_history_repaired_v3": true
+  "latest_date": "2026-09-17"
 }
