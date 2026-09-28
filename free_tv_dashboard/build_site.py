@@ -37,6 +37,18 @@ def ensure():
     for p in [INCOMING,ARCHIVE,LATEST,IMAGES,DOCS]: p.mkdir(parents=True,exist_ok=True)
     if not META.exists(): META.write_text(json.dumps({'latest_date':None,'image_dates':[]},indent=2))
 
+def read_meta():
+    try:
+        raw = META.read_text(encoding='utf-8').strip()
+        return json.loads(raw) if raw else {'latest_date': None, 'image_dates': []}
+    except (OSError, json.JSONDecodeError):
+        return {'latest_date': None, 'image_dates': []}
+
+def write_meta(meta):
+    tmp = META.with_suffix('.json.tmp')
+    tmp.write_text(json.dumps(meta, indent=2), encoding='utf-8')
+    tmp.replace(META)
+
 def fmt(col,v):
     if pd.isna(v): return ''
     if isinstance(v,(int,float)):
@@ -257,11 +269,9 @@ def normalize_date_images(date):
 
 
 def normalize_all_images():
-    if not IMAGES.exists():
-        return
-    for d in IMAGES.iterdir():
-        if d.is_dir():
-            normalize_date_images(d.name)
+    # Historical image folders are immutable. New screenshots are normalized
+    # exactly once during ingest(); never reopen/rewrite archived PNGs here.
+    return
 
 def ingest(batch):
     date,found,imgs=batch
@@ -272,10 +282,10 @@ def ingest(batch):
         # Convert to PNG so HTML paths stay stable.
         with Image.open(p) as im:
             crop_white_padding(im).save(ddir/f'{k}{ext}')
-    meta=json.loads(META.read_text())
+    meta = read_meta()
     meta['latest_date']=date
     ds=set(meta.get('image_dates',[])); ds.add(date); meta['image_dates']=sorted(ds)
-    META.write_text(json.dumps(meta,indent=2))
+    write_meta(meta)
     arc=ARCHIVE/date; arc.mkdir(parents=True,exist_ok=True)
     for p in list(found.values())+list(imgs.values()):
         dest=arc/p.name
@@ -312,18 +322,17 @@ def prune_image_history(max_days=5):
     kept = [p.name for p in datedirs[:max_days]]
 
     try:
-        meta = json.loads(META.read_text())
+        meta = read_meta()
     except Exception:
         meta = {}
 
     meta['image_dates'] = kept
-    META.write_text(json.dumps(meta, indent=2))
+    write_meta(meta)
 
 def build_html():
     ensure()
-    normalize_all_images()
     prune_image_history(5)
-    meta=json.loads(META.read_text())
+    meta=read_meta()
     # Copy accumulated images into docs.
     outimg=DOCS/'images'
     if outimg.exists(): shutil.rmtree(outimg)
@@ -590,7 +599,7 @@ def process_once():
     ensure(); batch,msg=find_batch()
     if batch:
         d=ingest(batch); build_html(); return True, f'Processed {d}. Website rebuilt.'
-    build_html(); return False,msg
+    return False,msg
 
 if __name__=='__main__':
     ok,msg=process_once(); print(msg)
